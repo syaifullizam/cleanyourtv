@@ -866,6 +866,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         sky.update();
         wallpaperPlayer.start();
         handler.postDelayed(minuteTick, MINUTE_MS);
+        if (!getString(R.string.solat_zone).trim().isEmpty()) handler.postDelayed(solatSecondTick, 1000);
         if (festive && diya != null) {
             diya.start();
             LocalDate today = LocalDate.now();
@@ -1039,6 +1040,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         ambient.animate().cancel();
         heroArt.animate().cancel();
         handler.removeCallbacks(minuteTick);
+        handler.removeCallbacks(solatSecondTick);
         stopStats();
         if (diya != null) diya.stop();
         cancelPendingFocusScroll();
@@ -2301,6 +2303,35 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private static final String[] DAYS_MS = {"Isnin", "Selasa", "Rabu", "Khamis", "Jumaat", "Sabtu", "Ahad"};
     private static final String[] MONTHS_MS = {"Jan", "Feb", "Mac", "Apr", "Mei", "Jun", "Jul", "Ogos", "Sep", "Okt", "Nov", "Dis"};
 
+    private java.time.LocalTime[] solatToday;
+    private int solatShownNext = -2;
+
+    /** One TextView update per second, only while Home is resumed and the panel is showing. */
+    private final Runnable solatSecondTick = new Runnable() {
+        @Override
+        public void run() {
+            if (solatPanel.getVisibility() == View.VISIBLE) {
+                updateSolatHeadline();
+                if (solatShownNext != Solat.next(solatToday, java.time.LocalTime.now())) updateSolat(false);
+            }
+            handler.postDelayed(this, 1000);
+        }
+    };
+
+    private void updateSolatHeadline() {
+        if (solatToday == null) return;
+        java.time.LocalTime now = java.time.LocalTime.now().withNano(0);
+        int next = Solat.next(solatToday, now);
+        solatShownNext = next;
+        if (next >= 0) {
+            long s = java.time.Duration.between(now, solatToday[next]).getSeconds();
+            String in = String.format(Locale.US, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60);
+            solatHeadline.setText(Solat.NAMES[next] + "  " + solatToday[next] + "  \u00B7  " + in);
+        } else {
+            solatHeadline.setText(Solat.NAMES[5] + "  " + solatToday[5]);
+        }
+    }
+
     /** Fills the panel from the cache; with {@code allowFetch}, starts the once-a-day refresh when the cache is stale. */
     private void updateSolat(boolean allowFetch) {
         String zone = getString(R.string.solat_zone).trim();
@@ -2318,6 +2349,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }, "solat").start();
         }
         java.time.LocalTime[] times = Solat.parseTimes(Solat.cachedPrayers(this), today);
+        solatToday = times;
         if (times == null || racePanel.getVisibility() == View.VISIBLE) {
             solatPanel.setVisibility(View.GONE);
             return;
@@ -2326,13 +2358,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         int next = Solat.next(times, now);
         solatKicker.setText("Waktu Solat \u00B7 " + zone + " \u00B7 " + DAYS_MS[today.getDayOfWeek().getValue() - 1]
                 + " " + today.getDayOfMonth() + " " + MONTHS_MS[today.getMonthValue() - 1]);
-        if (next >= 0) {
-            long mins = java.time.Duration.between(now, times[next]).toMinutes() + 1;
-            String in = mins >= 60 ? (mins / 60) + "j " + (mins % 60) + "m" : mins + "m";
-            solatHeadline.setText(Solat.NAMES[next] + "  " + times[next] + "  \u00B7  " + in);
-        } else {
-            solatHeadline.setText(Solat.NAMES[5] + "  " + times[5]);
-        }
+        updateSolatHeadline();
         android.text.SpannableStringBuilder row = new android.text.SpannableStringBuilder();
         for (int i = 0; i < times.length; i++) {
             if (i > 0) row.append("    ");
