@@ -182,6 +182,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private TextView stats;
     private List<RaceWeekend.Race> raceCalendar;
     private View racePanel;
+    private View solatPanel;
+    private TextView solatKicker, solatHeadline, solatTimes, solatHoliday;
+    private boolean solatFetching;
     private TextView raceKicker, raceHeadline, raceSessions;
     /** config.xml show_stats, overridable by a theme. Off: the line is gone and nothing is read. */
     private boolean showStats;
@@ -339,6 +342,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         public void run() {
             updateGreeting();
             updateRace();
+            updateSolat(false);
             // The pill follows the network callbacks and each return to Home; only the diya's flame follows the
             // signal level, so only it needs this minute's binder calls (about 7 ms on the UI thread).
             if (festive) updateWifiLabel();
@@ -439,6 +443,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         stats = findViewById(R.id.stats);
         raceCalendar = cfg.raceCalendar;
         racePanel = findViewById(R.id.racePanel);
+        solatPanel = findViewById(R.id.solatPanel);
+        solatKicker = findViewById(R.id.solatKicker);
+        solatHeadline = findViewById(R.id.solatHeadline);
+        solatTimes = findViewById(R.id.solatTimes);
+        solatHoliday = findViewById(R.id.solatHoliday);
         raceKicker = findViewById(R.id.raceKicker);
         raceHeadline = findViewById(R.id.raceHeadline);
         raceSessions = findViewById(R.id.raceSessions);
@@ -841,6 +850,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (openLiveTvAfterBoot()) return;
         updateGreeting();
         updateRace();
+        updateSolat(true);
         // The network and Inputs pills keep their state while Home is in the background, and callbacks update them
         // when the network or the inputs change, so this refresh only catches anything missed. Its binder calls
         // (about 7 ms on a TCL C755, most of it WifiManager.getConnectionInfo) would hold up the first frame back
@@ -2284,6 +2294,64 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             greeting.setTextColor(greetingColor);
         }
         if (shamsi) shamsiDate.setText(Shamsi.today(getResources()));
+    }
+
+    // ---- prayer-time panel (config.xml solat_zone, fork only) ---------------------------------------------
+
+    private static final String[] DAYS_MS = {"Isnin", "Selasa", "Rabu", "Khamis", "Jumaat", "Sabtu", "Ahad"};
+    private static final String[] MONTHS_MS = {"Jan", "Feb", "Mac", "Apr", "Mei", "Jun", "Jul", "Ogos", "Sep", "Okt", "Nov", "Dis"};
+
+    /** Fills the panel from the cache; with {@code allowFetch}, starts the once-a-day refresh when the cache is stale. */
+    private void updateSolat(boolean allowFetch) {
+        String zone = getString(R.string.solat_zone).trim();
+        if (zone.isEmpty()) return;
+        LocalDate today = LocalDate.now();
+        if (allowFetch && !solatFetching && Solat.stale(this, today)) {
+            solatFetching = true;
+            final String state = getString(R.string.solat_state).trim();
+            new Thread(() -> {
+                boolean changed = Solat.refresh(getApplicationContext(), zone, state, today);
+                handler.post(() -> {
+                    solatFetching = false;
+                    if (changed && !isDestroyed()) updateSolat(false);
+                });
+            }, "solat").start();
+        }
+        java.time.LocalTime[] times = Solat.parseTimes(Solat.cachedPrayers(this), today);
+        if (times == null || racePanel.getVisibility() == View.VISIBLE) {
+            solatPanel.setVisibility(View.GONE);
+            return;
+        }
+        java.time.LocalTime now = java.time.LocalTime.now();
+        int next = Solat.next(times, now);
+        solatKicker.setText("Waktu Solat \u00B7 " + zone + " \u00B7 " + DAYS_MS[today.getDayOfWeek().getValue() - 1]
+                + " " + today.getDayOfMonth() + " " + MONTHS_MS[today.getMonthValue() - 1]);
+        if (next >= 0) {
+            long mins = java.time.Duration.between(now, times[next]).toMinutes() + 1;
+            String in = mins >= 60 ? (mins / 60) + "j " + (mins % 60) + "m" : mins + "m";
+            solatHeadline.setText(Solat.NAMES[next] + "  " + times[next] + "  \u00B7  " + in);
+        } else {
+            solatHeadline.setText(Solat.NAMES[5] + "  " + times[5]);
+        }
+        android.text.SpannableStringBuilder row = new android.text.SpannableStringBuilder();
+        for (int i = 0; i < times.length; i++) {
+            if (i > 0) row.append("    ");
+            int start = row.length();
+            row.append(Solat.NAMES[i]).append(' ').append(times[i].toString());
+            int color = next == i ? 0xFFFFFFFF : (next < 0 || i < next ? 0x47FFFFFF : 0x99FFFFFF);
+            row.setSpan(new android.text.style.ForegroundColorSpan(color), start, row.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        solatTimes.setText(row);
+        Solat.Holiday h = Solat.upcoming(Solat.parseHolidays(Solat.cachedHolidays(this)), today);
+        if (h == null) {
+            solatHoliday.setVisibility(View.GONE);
+        } else {
+            long days = java.time.temporal.ChronoUnit.DAYS.between(today, h.date);
+            solatHoliday.setText("Cuti: " + h.date.getDayOfMonth() + " " + MONTHS_MS[h.date.getMonthValue() - 1] + " \u00B7 " + h.ms
+                    + " / " + h.en + (days == 0 ? " (hari ini)" : " (" + days + " hari)"));
+            solatHoliday.setVisibility(View.VISIBLE);
+        }
+        solatPanel.setVisibility(View.VISIBLE);
     }
 
     // ---- race-weekend panel (a theme's race_calendar) -----------------------------------------------
